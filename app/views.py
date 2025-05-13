@@ -341,7 +341,7 @@ def editProfile(request):
         user.save()
         return redirect("profile",username=user.username)
 
-    return render(request, "editprofile.html")
+    return render(request, "editProfile.html")
 
 
 # POST

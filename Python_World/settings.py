@@ -16,7 +16,7 @@ import os
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-MONGO_URI = "mongodb+srv://patelvishw596:Vkp8989@cluster0.slx1g.mongodb.net/python-community"
+MONGO_URI = "mongodb://localhost:27017/python-world"
 connect(host=MONGO_URI)
 
 SECRET_KEY = 'django-insecure-0pfz8hbbu^%f#vj^t=n_qi^x7ymd@j-(y2e9=y2v2n+_k)(x0s'
@@ -133,3 +133,4 @@ cloudinary.config(
   api_key = '228262976245473', 
   api_secret = 'g8k8t6a03lwMt3diq-Peuy3Vxl4' 
 )
+

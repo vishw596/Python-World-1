@@ -15,7 +15,11 @@ urlpatterns = [
     path("profile/<str:username>",views.profile,name="profile"),
     path("feed",views.feed,name="feed"),
     path("followUnfollow/<str:username>",views.followUnfollow,name="followUnfollow"),
-
+    path("google-login/",views.google_login,name="google"),
+    path("google-callback/",views.google_callback),
+    path("github-login/",views.github_login,name="github"),
+    path("github-callback/",views.github_callback),
+    path("test/",views.find_user_email),
     # NAVBAR
     path('article',views.article, name='article'),
     path('qna/',views.qna,name='qna'),

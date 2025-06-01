@@ -7,7 +7,7 @@ from mongoengine import ObjectIdField
 # AUTHENTICATION IMPORT
 from django.contrib.auth.hashers import make_password, check_password
 from django.contrib.auth import authenticate, login, logout
-from django.http import HttpResponse, JsonResponse
+from django.http import HttpResponse, JsonResponse, HttpResponseServerError
 
 # MODEL IMPORT
 from app.models import *
@@ -27,11 +27,143 @@ import json
 from .models import User
 import cloudinary.uploader
 from bson import ObjectId
-from .models import User, Post, Comment 
+from .models import User, Post, Comment
+from authlib.integrations.django_client import OAuth
+import traceback
+
+
+GOOGLE_CLIENT_ID = (
+    "747537157684-e10jgo84hgkt8c24d3g2357k41bp2bmi.apps.googleusercontent.com"
+)
+GOOGLE_CLIENT_SECRET = "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"
+GOOGLE_META_URL = "https://accounts.google.com/.well-known/openid-configuration"
+DJANGO_SECRET = "e34828e2-03d4-42ba-9fda-859fdb76de8d"
+GOOGLE_REDIRECT_URL = "http://localhost:8000/google-callback"
+
+GITHUB_CLIENT_ID = "Iv23liSsaGT0JFW6ikT9"
+GITHUB_CLIENT_SECRET = "0e77ca8ed06e65bd4f3d57e75c84c84574cf3a37"
+GITHUB_REDIRECT_URL = "http://localhost:8000/github-callback"
+GITHUB_API_URL = "https://api.github.com/"
+
+
+def get_oauth_client(name):
+    oauth = OAuth()
+    if name == "google":
+        oauth.register(
+            name="google",
+            client_id=GOOGLE_CLIENT_ID,
+            client_secret=GOOGLE_CLIENT_SECRET,
+            server_metadata_url=GOOGLE_META_URL,
+            client_kwargs={
+                "scope": "openid profile email https://www.googleapis.com/auth/user.birthday.read https://www.googleapis.com/auth/user.gender.read"
+            },
+        )
+    if name == "github":
+        oauth.register(
+            "github",
+            client_id=GITHUB_CLIENT_ID,
+            client_secret=GITHUB_CLIENT_SECRET,
+            access_token_url="https://github.com/login/oauth/access_token",
+            access_token_params=None,
+            authorize_url="https://github.com/login/oauth/authorize",
+            authorize_params=None,
+            api_base_url=GITHUB_API_URL,
+            client_kwargs={"scope": "read:user user:email"},
+        )
+
+    return oauth
+
+
+def find_user_email(email):
+    user = User.objects(email=email).first()
+    return user
+
 
 # HOME PAGE
 def index(request):
     return render(request, "index.html")
+
+
+# GOOGLE LOGIN
+def google_login(request):
+    oauth = get_oauth_client("google")
+    return oauth.google.authorize_redirect(request, GOOGLE_REDIRECT_URL)
+
+
+def oauth_handler(request, email, auth_provider, picture):
+    print("Method invoked")
+    try:
+        db_user = find_user_email(email=email)
+        if not db_user:
+            user = User(
+                username=email, email=email, auth_provider=auth_provider, profilePicUrl=picture or ""
+            )
+            user.save()
+            request.session["user_id"] = str(user.id)
+            request.session["username"] = user.email
+            return redirect("/")
+        elif db_user.email == email and db_user.auth_provider == auth_provider:
+            request.session["user_id"] = str(db_user.id)
+            request.session["username"] = db_user.email
+            return redirect("/")
+        else:
+            messages.error(request,
+                f"You are signed in on our website using email {email} via {db_user.auth_provider}"
+            )
+            return redirect("/login")
+    except Exception as e:
+        print("ERROR:", e)
+        traceback.print_exc()
+        return redirect("/login")
+
+
+def google_callback(request):
+    try:
+        oauth = get_oauth_client("google")
+        token = oauth.google.authorize_access_token(request)
+        user_info = oauth.google.userinfo(token=token)
+        email = user_info["email"]
+        pic = user_info["picture"]
+        # db_user = find_user_email(email=email)
+        print(pic)
+        return oauth_handler(request=request,email=email,auth_provider="google",picture=pic)
+        # if oauth_handler(request=request,email=email,auth_provider="google",picture=pic,db_user=db_user) == True:
+        #     return redirect("/")
+        # else:
+            
+    except Exception as e:
+        print("ERROR:", e)
+        traceback.print_exc()
+        return HttpResponseServerError("OAuth callback failed")
+
+
+def github_login(request):
+    print("Request reached")
+    try:
+        oauth = get_oauth_client("github")
+        return oauth.github.authorize_redirect(
+            request, GITHUB_REDIRECT_URL, prompt="consent"
+        )
+    except Exception as e:
+        print("ERROR " + e)
+        return HttpResponseServerError("Crashed")
+
+
+def github_callback(request):
+    try:
+        oauth = get_oauth_client("github")
+        token = oauth.github.authorize_access_token(request)
+        print(token)
+        profileRes = oauth.github.get(f"{GITHUB_API_URL}user", token=token)
+        profileJson = profileRes.json()
+        print(profileJson)
+        emailRes = oauth.github.get(f"{GITHUB_API_URL}user/emails", token=token)
+        emailJson = emailRes.json()
+        print(emailJson)
+        return redirect("/")
+    except Exception as e:
+        print("ERROR: ", e)
+        return HttpResponseServerError("OAuthfailed")
 
 
 # LOGIN PAGE
@@ -76,7 +208,12 @@ def signupUser(request):
                 )
                 return redirect("signup")
             hashedPass = make_password(password=pass1, salt="12")
-            user = User(username=username, email=email, password=hashedPass)
+            user = User(
+                username=username,
+                email=email,
+                password=hashedPass,
+                auth_provider="manual",
+            )
             user.save()
             return redirect("login")
         else:
@@ -87,13 +224,14 @@ def signupUser(request):
 
     return render(request, "signup.html")
 
+
 def feed(request):
     if "user_id" not in request.session:
         return redirect("login")
-    
+
     return redirect("post")
 
-    
+
 # LOGOUT PAGE
 def logoutUser(request):
     request.session.flush()
@@ -115,7 +253,7 @@ def forgotpass(request):
             )
             user.set_password(newPassword)
             user.save()
-            
+
             try:
                 send_mail(
                     "Your New Password for Python World",
@@ -162,19 +300,23 @@ def profile(request, username):
         return HttpResponse("User not found", status=404)
 
     session_username = request.session.get("username")
-    session_user=User.objects.get(username=session_username)
+    session_user = User.objects.get(username=session_username)
     posts = Post.objects(posted_by=ObjectId(user.id)).order_by("-created_at").limit(5)
 
     is_following = session_user in user.followers
 
     print(is_following)
 
-    return render(request, "profile.html", {
-        "user": user,
-        "posts": posts,
-        "session_username": session_username, 
-        "is_following":is_following
-    })
+    return render(
+        request,
+        "profile.html",
+        {
+            "user": user,
+            "posts": posts,
+            "session_username": session_username,
+            "is_following": is_following,
+        },
+    )
 
 
 # FOLLOW UNFOLLOW
@@ -214,6 +356,7 @@ def utils(request):
         return redirect("login")
 
     return render(request, "utils.html")
+
 
 # QNA PAGE
 def qna(request):
@@ -259,6 +402,7 @@ def qna(request):
             return JsonResponse(json_util.dumps(data), safe=False)
     return render(request, "qna.html", {"questions": reversed(modified_ques)})
 
+
 # ANSWER QUESTION
 def que_answer(request):
     data = json.loads(request.body)["data"]
@@ -283,8 +427,9 @@ def que_answer(request):
     }
     return JsonResponse({"msg": json_util.dumps(ans_dict)})
 
+
 # UPVOTE QUESTION
-def upvote_que(request,que_id):
+def upvote_que(request, que_id):
     qid = ObjectId(que_id)
     question = QnA.objects.get(id=qid)
     user = User.objects.get(id=ObjectId(request.session.get("user_id")))
@@ -297,14 +442,17 @@ def upvote_que(request,que_id):
         question.upvotes.append(user)
         status = "added"
     question.save()
-    return JsonResponse({
-            "status":status,
+    return JsonResponse(
+        {
+            "status": status,
             "upvotes": len(question.upvotes),
             "downvotes": len(question.downvotes),
-        })
+        }
+    )
+
 
 # DOWNVOTE QUESTION
-def downvote_que(request,que_id):
+def downvote_que(request, que_id):
     qid = ObjectId(que_id)
     question = QnA.objects.get(id=qid)
     user = User.objects.get(id=ObjectId(request.session.get("user_id")))
@@ -317,35 +465,37 @@ def downvote_que(request,que_id):
         question.downvotes.append(user)
         status = "added"
     question.save()
-    return JsonResponse({
-            "status":status,
+    return JsonResponse(
+        {
+            "status": status,
             "upvotes": len(question.upvotes),
             "downvotes": len(question.downvotes),
-        })
+        }
+    )
 
 
 # EDIT PROFILE
 def editProfile(request):
     if "user_id" not in request.session:
         return redirect("login")
-    if request.method=="POST":
-        profileImageUrl=request.FILES.get("profilePicUrl")
-        profileImage=""
+    if request.method == "POST":
+        profileImageUrl = request.FILES.get("profilePicUrl")
+        profileImage = ""
         if profileImageUrl:
             upload_result = cloudinary.uploader.upload(profileImageUrl)
             profileImage = upload_result.get("secure_url")
-        else :
-            profileImage="ttt"
+        else:
+            profileImage = "ttt"
         user = User.objects.get(id=ObjectId(request.session.get("user_id")))
-        user.profilePicUrl=profileImage
+        user.profilePicUrl = profileImage
         if request.POST.get("username"):
-            user.username=request.POST.get("username")
+            user.username = request.POST.get("username")
         if request.POST.get("email"):
-            user.email=request.POST.get("email")
+            user.email = request.POST.get("email")
         if request.POST.get("bio"):
-            user.bio=request.POST.get("bio")
+            user.bio = request.POST.get("bio")
         user.save()
-        return redirect("profile",username=user.username)
+        return redirect("profile", username=user.username)
 
     return render(request, "editProfile.html")
 
@@ -354,7 +504,7 @@ def editProfile(request):
 def post(request):
     if "user_id" not in request.session:
         return redirect("login")
-    
+
     if request.method == "POST":
         title = request.POST.get("title")
         content = request.POST.get("content")
@@ -369,18 +519,17 @@ def post(request):
             image_url = upload_result.get("secure_url")
         else:
             image_url = "ttt"
-        
+
         # Save post
         post = Post(
             title=title,
             content=content,
             posted_by=ObjectId(request.session.get("user_id")),
             tags=taglist,
-            image_url=image_url
+            image_url=image_url,
         )
         post.save()
 
-       
         user = User.objects.get(id=ObjectId(request.session.get("user_id")))
         user.posts.append(post)
         user.save()
@@ -395,14 +544,18 @@ def post(request):
             post_dict["username"] = user.username
             post_dict["id"] = str(post.id)
 
-            comment_dict = [Comment.objects.get(id=comment.id) for comment in post.comments]
+            comment_dict = [
+                Comment.objects.get(id=comment.id) for comment in post.comments
+            ]
             post_dict["comments"] = comment_dict
-            
+
             modified_posts.append(post_dict)
 
     user = User.objects.get(id=ObjectId(request.session.get("user_id")))
 
-    return render(request, "post.html", {"posts": list(reversed(modified_posts)), "user":user})
+    return render(
+        request, "post.html", {"posts": list(reversed(modified_posts)), "user": user}
+    )
 
 
 # LIKE POST
@@ -417,7 +570,7 @@ def like_post(request, post_id):
             post = Post.objects.get(id=ObjectId(post_id))
         except Post.DoesNotExist:
             return JsonResponse({"error": "Post not found"}, status=404)
-        liked = False       
+        liked = False
         if user in post.likes:
             post.likes.remove(user)
         else:
@@ -425,10 +578,7 @@ def like_post(request, post_id):
             liked = True
 
         post.save()
-        return JsonResponse({
-            "liked":liked,
-            "like_count":len(post.likes)
-        })
+        return JsonResponse({"liked": liked, "like_count": len(post.likes)})
     return JsonResponse({"error": "Invalid request method"}, status=405)
 
 
@@ -452,9 +602,11 @@ def comment_post(request, post_id):
         post.comments.append(comment.id)
         post.save()
 
-        return JsonResponse({
-            "comment_body": comment.comment_body,
-            "created_at": datetime.strftime(comment.created_at, "%b %d, %Y"),
-            "username": comment.created_by.username,
-            "initial": comment.created_by.username[0].upper()
-        })
+        return JsonResponse(
+            {
+                "comment_body": comment.comment_body,
+                "created_at": datetime.strftime(comment.created_at, "%b %d, %Y"),
+                "username": comment.created_by.username,
+                "initial": comment.created_by.username[0].upper(),
+            }
+        )

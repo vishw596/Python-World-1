@@ -5,8 +5,8 @@ from django.utils import timezone
 from datetime import date
 
 class User(Document):
-    username = StringField(required=True,unique=True)
-    password = StringField(required=True)
+    username = StringField(unique=True)
+    password = StringField()
     email = EmailField(required=True,unique=True)
     bio = StringField(default="hey there i'm using social media platform")
     followings = ListField(ReferenceField('User'))
@@ -17,6 +17,7 @@ class User(Document):
     created_at = DateTimeField(default=timezone.now)
     updated_at = DateTimeField(default=timezone.now)
     is_active = BooleanField(default=True)
+    auth_provider = StringField(choices=["github","google","x","facebook","manual"],default="manual",required=True)
     meta = {'collection': 'users'}
 
 class Post(Document):

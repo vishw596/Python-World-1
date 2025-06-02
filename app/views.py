@@ -30,20 +30,21 @@ from bson import ObjectId
 from .models import User, Post, Comment
 from authlib.integrations.django_client import OAuth
 import traceback
+from django.conf import settings
 
+from django.shortcuts import render
 
-GOOGLE_CLIENT_ID = (
-    "747537157684-e10jgo84hgkt8c24d3g2357k41bp2bmi.apps.googleusercontent.com"
-)
-GOOGLE_CLIENT_SECRET = "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"
-GOOGLE_META_URL = "https://accounts.google.com/.well-known/openid-configuration"
-DJANGO_SECRET = "e34828e2-03d4-42ba-9fda-859fdb76de8d"
-GOOGLE_REDIRECT_URL = "http://localhost:8000/google-callback"
-
-GITHUB_CLIENT_ID = "Iv23liSsaGT0JFW6ikT9"
-GITHUB_CLIENT_SECRET = "0e77ca8ed06e65bd4f3d57e75c84c84574cf3a37"
-GITHUB_REDIRECT_URL = "http://localhost:8000/github-callback"
-GITHUB_API_URL = "https://api.github.com/"
+# Create your views here.
+from django.http import HttpResponse, JsonResponse, HttpResponseServerError
+from datetime import datetime
+from django.conf import settings
+from authlib.integrations.django_client import OAuth
+from app.models import User
+from django.shortcuts import redirect, render
+from django.contrib import messages
+import traceback
+from django.contrib.auth.hashers import make_password, check_password
+import re
 
 
 def get_oauth_client(name):
@@ -51,9 +52,9 @@ def get_oauth_client(name):
     if name == "google":
         oauth.register(
             name="google",
-            client_id=GOOGLE_CLIENT_ID,
-            client_secret=GOOGLE_CLIENT_SECRET,
-            server_metadata_url=GOOGLE_META_URL,
+            client_id=settings.GOOGLE_CLIENT_ID,
+            client_secret=settings.GOOGLE_CLIENT_SECRET,
+            server_metadata_url=settings.GOOGLE_META_URL,
             client_kwargs={
                 "scope": "openid profile email https://www.googleapis.com/auth/user.birthday.read https://www.googleapis.com/auth/user.gender.read"
             },
@@ -61,54 +62,111 @@ def get_oauth_client(name):
     if name == "github":
         oauth.register(
             "github",
-            client_id=GITHUB_CLIENT_ID,
-            client_secret=GITHUB_CLIENT_SECRET,
+            client_id=settings.GITHUB_CLIENT_ID,
+            client_secret=settings.GITHUB_CLIENT_SECRET,
             access_token_url="https://github.com/login/oauth/access_token",
             access_token_params=None,
             authorize_url="https://github.com/login/oauth/authorize",
             authorize_params=None,
-            api_base_url=GITHUB_API_URL,
+            api_base_url=settings.GITHUB_API_URL,
             client_kwargs={"scope": "read:user user:email"},
         )
-
+    if name == "x":
+        oauth.register(
+            name="x",
+            client_id=settings.X_CLIENT_ID,
+            client_secret=settings.X_CLIENT_SECRET,
+            request_token_url=settings.X_REQUEST_TOKEN_URL,
+            authorize_url=settings.X_AUTHORIZE_URL,
+            access_token_url=settings.X_ACCESS_TOKEN_URL,
+            api_base_url=settings.X_API_URL,
+            client_kwargs=None,
+        )
     return oauth
 
+def x_login(request):
+   try:
+        oauth = get_oauth_client("x")
+        x = oauth.create_client("x")
+        # OAuth 1.0a requires token fetching step
+        redirect_uri = settings.X_CALLBACK_URI
+        return x.authorize_redirect(request, redirect_uri)
+   except Exception as e:
+        print("Error during X login:", e)
+        return HttpResponseServerError("X login failed")
+
+
+def x_callback(request):
+    try:
+        oauth = get_oauth_client("x")
+        x = oauth.create_client("x")
+        token = x.authorize_access_token(request)  # exchanges oauth_token+verifier for access token
+
+        user_info_resp = x.get(
+            "account/verify_credentials.json",
+            params={"include_email": "true"},
+            token=token,
+        )
+
+        user_info = user_info_resp.json()
+        print("User Info from X:", user_info)
+
+        email = user_info.get("email")
+        if not email:
+            return HttpResponse("We could not access your email from X. Please use another login method.")
+
+        x_id = user_info.get("id_str")
+        username = user_info.get("screen_name")
+        name = user_info.get("name")
+        picture = user_info.get("profile_image_url_https")
+
+        return oauth_handler(
+            request=request,
+            email=email,
+            auth_provider="x",
+            picture=picture,
+            username=username
+        )
+    except Exception as e:
+        print("X OAuth Callback Error:", e)
+        traceback.print_exc()
+        return HttpResponseServerError("X OAuth failed")
 
 def find_user_email(email):
     user = User.objects(email=email).first()
     return user
 
 
-# HOME PAGE
-def index(request):
-    return render(request, "index.html")
-
-
 # GOOGLE LOGIN
 def google_login(request):
     oauth = get_oauth_client("google")
-    return oauth.google.authorize_redirect(request, GOOGLE_REDIRECT_URL)
+    return oauth.google.authorize_redirect(request, settings.GOOGLE_REDIRECT_URL)
 
 
-def oauth_handler(request, email, auth_provider, picture):
+def oauth_handler(request, email, auth_provider, picture, username=None):
     print("Method invoked")
+    print(username)
     try:
         db_user = find_user_email(email=email)
         if not db_user:
             user = User(
-                username=email, email=email, auth_provider=auth_provider, profilePicUrl=picture or ""
+                username=username or email,
+                email=email,
+                auth_provider=auth_provider,
+                profilePicUrl=picture or "",
             )
             user.save()
             request.session["user_id"] = str(user.id)
-            request.session["username"] = user.email
+            request.session["username"] = user.username
             return redirect("/")
         elif db_user.email == email and db_user.auth_provider == auth_provider:
             request.session["user_id"] = str(db_user.id)
             request.session["username"] = db_user.email
             return redirect("/")
         else:
-            messages.error(request,
-                f"You are signed in on our website using email {email} via {db_user.auth_provider}"
+            messages.error(
+                request,
+                f"You are signed in on our website using email {email} via {db_user.auth_provider}",
             )
             return redirect("/login")
     except Exception as e:
@@ -126,11 +184,13 @@ def google_callback(request):
         pic = user_info["picture"]
         # db_user = find_user_email(email=email)
         print(pic)
-        return oauth_handler(request=request,email=email,auth_provider="google",picture=pic)
+        return oauth_handler(
+            request=request, email=email, auth_provider="google", picture=pic
+        )
         # if oauth_handler(request=request,email=email,auth_provider="google",picture=pic,db_user=db_user) == True:
         #     return redirect("/")
         # else:
-            
+
     except Exception as e:
         print("ERROR:", e)
         traceback.print_exc()
@@ -142,7 +202,7 @@ def github_login(request):
     try:
         oauth = get_oauth_client("github")
         return oauth.github.authorize_redirect(
-            request, GITHUB_REDIRECT_URL, prompt="consent"
+            request, settings.GITHUB_REDIRECT_URL, prompt="consent"
         )
     except Exception as e:
         print("ERROR " + e)
@@ -154,13 +214,29 @@ def github_callback(request):
         oauth = get_oauth_client("github")
         token = oauth.github.authorize_access_token(request)
         print(token)
-        profileRes = oauth.github.get(f"{GITHUB_API_URL}user", token=token)
+        profileRes = oauth.github.get(f"{settings.GITHUB_API_URL}user", token=token)
         profileJson = profileRes.json()
         print(profileJson)
-        emailRes = oauth.github.get(f"{GITHUB_API_URL}user/emails", token=token)
-        emailJson = emailRes.json()
-        print(emailJson)
-        return redirect("/")
+        emailRes = oauth.github.get(
+            f"{settings.GITHUB_API_URL}user/emails", token=token
+        )
+        emailList = emailRes.json()
+        if len(emailList) == 0:
+            messages.error(
+                request,
+                "You have not added email in your github account please add email to github to login",
+            )
+            return redirect("/")
+        email = emailList[0]["email"]
+        username = profileJson["login"]
+        pic = profileJson["avatar_url"]
+        return oauth_handler(
+            request=request,
+            email=email,
+            auth_provider="github",
+            picture=pic,
+            username=username,
+        )
     except Exception as e:
         print("ERROR: ", e)
         return HttpResponseServerError("OAuthfailed")
@@ -225,18 +301,23 @@ def signupUser(request):
     return render(request, "signup.html")
 
 
-def feed(request):
-    if "user_id" not in request.session:
-        return redirect("login")
-
-    return redirect("post")
-
-
 # LOGOUT PAGE
 def logoutUser(request):
     request.session.flush()
     messages.success(request, "Logged Out Successfully")
     return redirect("login")
+
+
+# HOME PAGE
+def index(request):
+    return render(request, "index.html")
+
+
+def feed(request):
+    if "user_id" not in request.session:
+        return redirect("login")
+
+    return redirect("post")
 
 
 # FORGOT PASSWORD PAGE

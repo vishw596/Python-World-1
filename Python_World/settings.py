@@ -13,10 +13,13 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 from pathlib import Path
 from mongoengine import connect
 import os
+import environ
 
+env = environ.Env()
+environ.Env.read_env()
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-MONGO_URI = "mongodb://localhost:27017/python-world"
+MONGO_URI = env("MONGO_URL")
 connect(host=MONGO_URI)
 
 SECRET_KEY = 'django-insecure-0pfz8hbbu^%f#vj^t=n_qi^x7ymd@j-(y2e9=y2v2n+_k)(x0s'
@@ -38,7 +41,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'app',
-    'corsheaders',
+    'corsheaders'
 ]
 
 CORS_ALLOW_ALL_ORIGINS = True  
@@ -133,4 +136,21 @@ cloudinary.config(
   api_key = '228262976245473', 
   api_secret = 'g8k8t6a03lwMt3diq-Peuy3Vxl4' 
 )
+
+GOOGLE_CLIENT_ID = env('GOOGLE_CLIENT_ID')
+GOOGLE_CLIENT_SECRET = env('GOOGLE_CLIENT_SECRET')
+GOOGLE_META_URL = env('GOOGLE_META_URL')
+DJANGO_SECRET = env('DJANGO_SECRET')
+GOOGLE_REDIRECT_URL = env('GOOGLE_REDIRECT_URL')
+GITHUB_CLIENT_ID = env('GITHUB_CLIENT_ID')
+GITHUB_CLIENT_SECRET = env('GITHUB_CLIENT_SECRET')
+GITHUB_REDIRECT_URL = env('GITHUB_REDIRECT_URL')
+GITHUB_API_URL = env('GITHUB_API_URL')
+X_CLIENT_ID = env("X_CLIENT_ID")
+X_CLIENT_SECRET = env("X_CLIENT_SECRET")
+X_REQUEST_TOKEN_URL = env("X_REQUEST_TOKEN_URL")
+X_AUTHORIZE_URL = env("X_AUTHORIZE_URL")
+X_ACCESS_TOKEN_URL = env("X_ACCESS_TOKEN_URL")
+X_CALLBACK_URI = env("X_CALLBACK_URI")
+X_API_URL = env("X_API_URL")
 

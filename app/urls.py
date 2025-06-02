@@ -19,7 +19,8 @@ urlpatterns = [
     path("google-callback/",views.google_callback),
     path("github-login/",views.github_login,name="github"),
     path("github-callback/",views.github_callback),
-    path("test/",views.find_user_email),
+    path("x-login/",views.x_login,name="x"),
+    path("x-callback/",views.x_callback),
     # NAVBAR
     path('article',views.article, name='article'),
     path('qna/',views.qna,name='qna'),
